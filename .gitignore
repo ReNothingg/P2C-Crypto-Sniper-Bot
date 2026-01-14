@@ -1,0 +1,12 @@
+__pycache__/
+
+bot_users.db
+bot_users.db-wal
+bot_users.db-shm
+
+logs/
+
+Cargo.lock
+target/
+
+.env
