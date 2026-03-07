@@ -20,14 +20,13 @@
 2. Фильтр по сумме (MIN/MAX) с изменением на лету.
 3. Дедупликация ID ордеров, чтобы не брать одно и то же повторно.
 4. Очередь ордеров + многопоточный take (TAKE_WORKERS).
-5. Запрос take/{id} по keep-alive TLS-соединению.
-6. Обработка ответов (200/400/429/other) с логированием латентности.
-7. Автопереподключение WS.
-8. Консольное управление: min/max/on/off/limits/status/stats/stop/restart.
-9. Telegram sendPhoto (QR + caption: сумма, бренд, ссылка).
-10. Telegram polling callback и API-действия complete/cancel.
-11. Детальная статистика (ok/taken/limit/err/reconnect/ws frames).
-12. Сборка через CMake, есть скрипты install.sh и sysctl.sh.
+5. Обработка ответов (200/400/429/other) с логированием латентности.
+6. Автопереподключение WS.
+7. Консольное управление: min/max/on/off/limits/status/stats/stop/restart.
+8. Telegram sendPhoto (QR + caption: сумма, бренд, ссылка).
+9. Telegram polling callback и API-действия complete/cancel.
+10. Детальная статистика (ok/taken/limit/err/reconnect/ws frames).
+11. Сборка через CMake, есть скрипты install.sh и sysctl.sh.
 
 **Что передается при продаже**
 
