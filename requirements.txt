@@ -1,0 +1,8 @@
+aiohttp
+loguru
+apscheduler
+aiogram
+dotenv
+aiosqlite
+orjson
+uvloop; sys_platform == "linux"
