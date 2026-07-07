@@ -3,14 +3,27 @@ import asyncio
 import ssl
 import json
 
+# СЮДА ВСТАВИТЬ ТОКЕН!
 TOKEN = ""
 
-async def main():
-    url = "https://app.cr.bot/internal/v1/p2c/accounts"
+def build_cookie(value):
+    value = value.strip()
+    if not value:
+        raise ValueError("TOKEN пустой")
+    if "access_token=" in value:
+        return value
+    return f"access_token={value}"
 
+async def main():
+    url = "https://app.send.tg/internal/v1/p2c/accounts"
+
+    cookie = build_cookie(TOKEN)
     headers = {
-        "Cookie": f"access_token={TOKEN}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru",
+        "Cookie": cookie,
+        "Referer": "https://app.send.tg/",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15",
     }
 
     ssl_ctx = ssl.create_default_context()
@@ -41,11 +54,12 @@ async def main():
                         print(f"ID: {acc['id']}  |  {title} ({currency})")
                         print("-" * 30)
                 else:
-                    print("Список пуст. Возможно, у тебя не добавлены реквизиты в боте?")
-                    print(f"Ответ сервера: {data}")
+                    print("Список пуст. Возможно, у тебя не добавлены реквизиты в криптобота")
+                    print(data)
 
             else:
                 print(f"Ошибка: {resp.status}")
+                print(f"Cookie отправлен как {'полная строка из браузера' if ';' in cookie else 'access_token'}")
                 print(await resp.text())
 
 if __name__ == "__main__":
