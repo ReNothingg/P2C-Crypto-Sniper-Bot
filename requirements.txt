@@ -2,7 +2,6 @@ aiohttp
 loguru
 apscheduler
 aiogram
-dotenv
+python-dotenv
 aiosqlite
-orjson
 uvloop; sys_platform == "linux"

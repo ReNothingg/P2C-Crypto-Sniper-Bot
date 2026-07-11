@@ -1,244 +1,250 @@
 import asyncio
-import ssl
-import time
-import random
-import socket
-import gc
-import orjson
+from decimal import Decimal
+
 import aiohttp
 from loguru import logger
-from database import db
+
 import config
+from database import db
+from send_api import parse_amount, queue_items
 
-ssl_ctx = ssl.create_default_context()
-ssl_ctx.check_hostname = False
-ssl_ctx.verify_mode = ssl.CERT_NONE
 
-WS_URL = "wss://app.cr.bot/internal/v1/p2c-socket/?EIO=4&transport=websocket"
-API_TAKE_URL = "https://app.cr.bot/internal/v1/p2c/payments/take"
-PAYMENTS_URL = "https://app.cr.bot/internal/v1/p2c/payments?size=20"
+TAKE_PAYMENT_URL = f"{config.API_BASE_URL}/p2cMerchant/takePayment"
+GET_PAYMENTS_URL = f"{config.API_BASE_URL}/p2cMerchant/getPayments"
+GET_WS_TOKEN_URL = f"{config.API_BASE_URL}/p2cMerchant/getWsToken"
+
 
 class SniperBot:
-    def __init__(self, user_id, token, req_id, proxy, min_amt, max_amt, bot_instance):
+    def __init__(self, user_id, api_key, proxy, min_amt, max_amt, bot_instance):
         self.user_id = user_id
-        self.token = token
-        self.req_id = req_id
+        self.api_key = api_key
         self.proxy = proxy
-        self.min = min_amt
-        self.max = max_amt
+        self.min = Decimal(str(min_amt))
+        self.max = Decimal(str(max_amt))
         self.bot = bot_instance
-
         self.running = False
         self.session = None
-        self.known_orders = set()
-
-        self.payload_bytes = orjson.dumps({"payment_method_id": self.req_id})
-        self.ua = random.choice(config.USER_AGENTS)
+        self.attempted_qrs = set()
+        self.taken_payments = {}
+        self.payment_statuses = {}
 
     def set_limits(self, min_amt, max_amt):
-        self.min = min_amt
-        self.max = max_amt
+        self.min = Decimal(str(min_amt))
+        self.max = Decimal(str(max_amt))
         logger.info(f"User {self.user_id} limits updated: {self.min} - {self.max}")
 
     async def send_notification(self, message):
-        async def _safe_send():
-            try:
-                await self.bot.send_message(self.user_id, message, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"⚠️ Failed to send TG message to {self.user_id}: {e}")
-        asyncio.create_task(_safe_send())
+        try:
+            await self.bot.send_message(self.user_id, message, parse_mode="HTML")
+        except Exception as exc:
+            logger.error(f"Failed to send Telegram message to {self.user_id}: {exc}")
 
     async def stop(self, reason=None):
         self.running = False
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
-
-        gc.enable()
-        gc.collect()
-
         await db.set_running_status(self.user_id, False)
-
         if reason:
             logger.warning(f"Sniper stopped for {self.user_id}: {reason}")
-            await self.send_notification(f"🛑 <b>Снайпер остановлен!</b>\nПричина: {reason}")
+            await self.send_notification(
+                f"🛑 <b>Снайпер остановлен</b>\nПричина: {reason}"
+            )
 
-    def get_safe_amount(self, order_data):
-        amt = order_data.get('in_amount') or order_data.get('amount')
+    async def api_request(self, method, url, **kwargs):
         try:
-            return (float(amt) / 10**18) if amt else 0.0
-        except:
-            return 0.0
+            async with self.session.request(
+                method,
+                url,
+                proxy=self.proxy,
+                timeout=config.REQUEST_TIMEOUT,
+                **kwargs,
+            ) as response:
+                try:
+                    payload = await response.json()
+                except (aiohttp.ContentTypeError, ValueError):
+                    payload = {
+                        "ok": False,
+                        "error": "InvalidResponse",
+                        "description": (await response.text())[:200],
+                    }
+                return response.status, payload
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning(f"Send.tg request failed for {self.user_id}: {exc}")
+            return 0, {"ok": False, "error": "ConnectionError"}
 
     async def monitor_payments(self):
-        logger.info(f"Started monitoring (and warmer) for {self.user_id}")
-        iteration_count = 0
-
         while self.running:
             try:
-                if not self.session or self.session.closed:
-                    break
-
-                start_time = time.perf_counter()
-
-                async with self.session.get(PAYMENTS_URL, proxy=self.proxy, timeout=10) as resp:
-                    ping = (time.perf_counter() - start_time) * 1000
-                    logger.info(f"📶 Ping {self.user_id}: {ping:.2f}ms") # ЛОГИ БЛЯДЬ
-
-                    if resp.status == 401:
-                        await self.stop("Токен истек (Ошибка 401). Обновите токен!")
+                payment_ids = list(self.taken_payments)
+                if payment_ids:
+                    status, payload = await self.api_request(
+                        "POST", GET_PAYMENTS_URL, json={"payment_ids": payment_ids}
+                    )
+                    if status == 401:
+                        await self.stop("API-ключ недействителен или отключён")
                         return
-
-                    if resp.status == 200:
-                        data = await resp.json()
-                        orders = data.get('data', [])
-
-                        for order in orders:
-                            oid = order.get('id')
-                            status = order.get('status')
-                            status_key = f"{oid}_{status}"
-
-                            if status == "completed" and status_key not in self.known_orders:
-                                self.known_orders.add(status_key)
-                                amount = self.get_safe_amount(order)
-                                await self.send_notification(
-                                    f"✅ <b>Payment Completed!</b>\n\n"
-                                    f"💰 Amount: {amount} RUB\n"
-                                    f"🆔 ID: <code>{oid}</code>"
-                                )
-                            elif status == "canceled":
-                                 self.known_orders.add(status_key)
-
+                    if payload.get("ok"):
+                        for payment in payload.get("result", {}).get("payments", []):
+                            await self.handle_payment_status(payment)
             except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"⚠️ Ping/Monitor error: {e}") # ЛОГИ БЛЯДЬ
-                pass
+                return
+            except Exception as exc:
+                logger.warning(f"Payment monitor error for {self.user_id}: {exc}")
+            await asyncio.sleep(config.POLL_INTERVAL)
 
-            iteration_count += 1
-            if iteration_count >= 12:
-                gc.collect()
-                iteration_count = 0
+    async def handle_payment_status(self, payment):
+        payment_id = payment.get("payment_id")
+        status = payment.get("status")
+        if payment_id is None or not status:
+            return
+        previous = self.payment_statuses.get(payment_id)
+        self.payment_statuses[payment_id] = status
+        if previous == status or status == "processing":
+            return
 
-            await asyncio.sleep(5)
+        amount = payment.get("in_amount", self.taken_payments.get(payment_id, "0"))
+        await db.log_order(payment_id, self.user_id, amount, status)
+        labels = {
+            "completed": "✅ <b>Payment completed</b>",
+            "canceled": "❌ <b>Payment canceled</b>",
+            "disputed": "⚠️ <b>Payment disputed</b>",
+            "refunded": "↩️ <b>Payment refunded</b>",
+        }
+        label = labels.get(status)
+        if label:
+            await self.send_notification(
+                f"{label}\n\n💰 Amount: {amount} RUB\n"
+                f"🆔 ID: <code>{payment_id}</code>"
+            )
 
-    async def send_single_shot(self, url, payload_bytes):
-        try:
-            start = time.perf_counter()
-            async with self.session.post(url, data=payload_bytes, proxy=self.proxy, timeout=5) as response:
-                latency = (time.perf_counter() - start) * 1000
-                text = await response.text()
-                return response.status, latency, text
-        except Exception:
-            return 0, 0, ""
+    async def try_take_order(self, qr):
+        qr_id = qr.get("qr_id")
+        amount = parse_amount(qr.get("in_amount"))
+        if not qr_id or qr_id in self.attempted_qrs:
+            return
+        if not self.min <= amount <= self.max:
+            return
+        self.attempted_qrs.add(qr_id)
 
-    async def try_take_order(self, order_id, amount):
-        url = f"{API_TAKE_URL}/{order_id}"
+        status, payload = await self.api_request(
+            "POST", TAKE_PAYMENT_URL, json={"qr_id": qr_id}
+        )
+        if status == 401:
+            await self.stop("API-ключ недействителен или отключён")
+            return
+        if payload.get("ok"):
+            payment = payload.get("result", {})
+            payment_id = payment.get("payment_id")
+            if payment_id is None:
+                logger.warning(f"takePayment returned no payment_id: {payload}")
+                return
+            self.taken_payments[payment_id] = str(amount)
+            self.payment_statuses[payment_id] = payment.get("status", "processing")
+            await db.log_order(payment_id, self.user_id, amount, "processing")
+            logger.success(
+                f"User {self.user_id} took payment {payment_id}: {amount} RUB"
+            )
+            await self.send_notification(
+                f"🔔 <b>New payment taken</b>\n\n"
+                f"💰 Amount: {amount} RUB\n"
+                f"🏪 Merchant: {payment.get('brand_name') or qr.get('brand_name') or '—'}\n"
+                f"🆔 ID: <code>{payment_id}</code>"
+            )
+            return
 
-        count = config.CONCURRENT_REQUESTS
-        tasks = [asyncio.create_task(self.send_single_shot(url, self.payload_bytes)) for _ in range(count)]
+        error = payload.get("error", "UnknownError")
+        description = payload.get("description", "")
+        logger.info(f"Payment {qr_id} was not taken: {error} {description}")
+        if error in {"IpWhitelistRequired", "AccessDenied", "NoPermissions"}:
+            await self.stop(f"Send.tg API: {error}. Проверьте scopes и IP whitelist")
 
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for p in pending: p.cancel()
+    async def consume_websocket(self):
+        status, token_payload = await self.api_request("GET", GET_WS_TOKEN_URL)
+        if not token_payload.get("ok"):
+            error = token_payload.get("error", f"HTTP {status}")
+            if error in {
+                "Unauthorized",
+                "ApiKeyExpired",
+                "AccessDenied",
+                "IpWhitelistRequired",
+                "NoPermissions",
+            }:
+                await self.stop(f"getWsToken: {error}")
+                return
+            raise RuntimeError(error)
 
-        for task in done:
-            try:
-                status, latency, response_text = task.result()
+        ws_token = token_payload.get("result", {}).get("ws_token")
+        if not ws_token:
+            raise RuntimeError("getWsToken returned no ws_token")
 
-                if status == 200:
-                    try:
-                        await db.log_order(order_id, self.user_id, amount, "sniped")
-                        logger.success(f"✅ User {self.user_id} TOOK: {amount} RUB | {latency:.2f}ms")
-                        await self.send_notification(
-                            f"🔔 <b>New Payment Detected!</b>\n\n"
-                            f"💰 Amount: {amount} RUB\n"
-                            f"🆔 ID: <code>{order_id}</code>\n"
-                            f"⚡ Speed: {latency:.2f}ms"
-                        )
-                        return
-                    except Exception as e:
-                        logger.error(f"DB Log Error: {e}")
-
-                elif status == 401:
-                    await self.stop("Токен истек во время захвата!")
+        async with self.session.ws_connect(
+            config.API_WS_URL,
+            params={"ws_token": ws_token},
+            proxy=self.proxy,
+            heartbeat=45,
+            timeout=config.REQUEST_TIMEOUT,
+        ) as ws:
+            logger.info(f"Send.tg WebSocket connected for {self.user_id}")
+            async for message in ws:
+                if not self.running:
                     return
-                elif status != 0:
-                    res_str = response_text[:50] if response_text else "Empty"
-                    logger.warning(f"❌ User {self.user_id} MISSED: {amount} RUB | {status} | {res_str}")
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                try:
+                    payload = message.json()
+                except ValueError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
 
-            except Exception as e:
-                logger.error(f"Task result error: {e}")
+                if payload.get("error"):
+                    error = payload["error"]
+                    retry_after = payload.get("retry_after")
+                    if error in {"AccessDenied", "IpWhitelistRequired"}:
+                        await self.stop(f"WebSocket: {error}")
+                        return
+                    if retry_after:
+                        await asyncio.sleep(min(float(retry_after), 60))
+                    raise RuntimeError(error)
+                if payload.get("event") == "ping":
+                    await ws.send_json({"event": "pong"})
+                    continue
+
+                for qr in queue_items(payload):
+                    logger.info(
+                        f"QR {qr.get('qr_id')} | {qr.get('in_amount')} RUB | "
+                        f"{qr.get('brand_name', '—')}"
+                    )
+                    asyncio.create_task(self.try_take_order(qr))
 
     async def start(self):
         self.running = True
-        gc.disable()
-
         headers = {
-            "User-Agent": self.ua,
-            "Cookie": f"access_token={self.token}",
-            "Origin": "https://app.cr.bot",
+            "X-API-Key": self.api_key,
+            "Accept": "application/json",
             "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*"
         }
-
-        conn = aiohttp.TCPConnector(
-            ssl=ssl_ctx,
-            limit=0,
-            ttl_dns_cache=3000,
-            keepalive_timeout=60,
-            family=socket.AF_INET
-        )
-
+        monitor_task = None
         try:
-            async with aiohttp.ClientSession(headers=headers, connector=conn) as session:
+            async with aiohttp.ClientSession(headers=headers) as session:
                 self.session = session
                 monitor_task = asyncio.create_task(self.monitor_payments())
-
                 while self.running:
                     try:
-                        async with session.ws_connect(WS_URL, headers=headers, heartbeat=15, proxy=self.proxy, timeout=10) as ws:
-                            logger.info(f"Socket connected for {self.user_id}")
-
-                            async for msg in ws:
-                                if not self.running: break
-
-                                if msg.type == aiohttp.WSMsgType.TEXT:
-                                    payload = msg.data
-
-                                    if payload.startswith("42"):
-                                        if '"op":"add"' in payload:
-                                            try:
-                                                idx = payload.find('[')
-                                                if idx != -1:
-                                                    data = orjson.loads(payload[idx:])
-                                                    if len(data) > 1:
-                                                        items = data[1]
-                                                        for item in items:
-                                                            if item["op"] == "add":
-                                                                d = item["data"]
-                                                                try:
-                                                                    amt = float(d.get("in_amount", 0))
-                                                                    logger.info(f"👀 Ордер: {d.get('id')} | Сумма: {amt:.2f} RUB")
-
-                                                                    if self.min <= amt <= self.max:
-                                                                        asyncio.create_task(self.try_take_order(d.get("id"), amt))
-                                                                except Exception as e:
-                                                                    logger.error(f"Error parsing order: {e}")
-                                            except Exception:
-                                                pass
-
-                                    elif payload.startswith("0"):
-                                        await ws.send_str("40")
-                                    elif payload == "2":
-                                        await ws.send_str("3")
-                                    elif payload.startswith("40"):
-                                        await ws.send_str('42["list:initialize"]')
-
-                    except Exception as e:
-                        logger.error(f"Socket died for {self.user_id}: {e}")
-                        await asyncio.sleep(5)
-
-                monitor_task.cancel()
-        except Exception as e:
-            logger.critical(f"Critical sniper error {self.user_id}: {e}")
+                        await self.consume_websocket()
+                    except asyncio.CancelledError:
+                        return
+                    except Exception as exc:
+                        if self.running:
+                            logger.warning(
+                                f"Send.tg WebSocket disconnected for {self.user_id}: {exc}"
+                            )
+                            await asyncio.sleep(5)
         finally:
-            gc.enable()
+            if monitor_task:
+                monitor_task.cancel()
+                await asyncio.gather(monitor_task, return_exceptions=True)
+            self.session = None
+            if self.running:
+                self.running = False
+                await db.set_running_status(self.user_id, False)
