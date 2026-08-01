@@ -93,7 +93,9 @@ def build_dashboard_rich(
     ]
     if not accounts:
         blocks.append(
-            InputRichBlockParagraph(text="API-ключи пока не подключены")
+            InputRichBlockParagraph(
+                text="API-ключи не заданы в config.py"
+            )
         )
     for index, account in enumerate(accounts, 1):
         view = merchant_views[index - 1] if index <= len(merchant_views) else {}
@@ -153,7 +155,7 @@ def build_dashboard_html(
         "<b>Подключённые мерчанты</b>",
     ]
     if not accounts:
-        lines.append("API-ключи пока не подключены")
+        lines.append("API-ключи не заданы в config.py")
     for index, account in enumerate(accounts, 1):
         view = merchant_views[index - 1] if index <= len(merchant_views) else {}
         merchant = (

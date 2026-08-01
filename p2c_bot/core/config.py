@@ -13,6 +13,21 @@ ADMIN_IDS = [
     for value in os.getenv("ADMIN_IDS", "7878539493").split(",")
     if value.strip().isdigit()
 ]
+
+# Merchant API keys are managed only here. The Telegram bot no longer accepts
+# credentials in messages. Keep every key assigned to exactly one admin.
+API_KEYS_BY_ADMIN: dict[int, list[str]] = {
+    # 7878539493: [
+    #     "merchant-api-key-1",
+    #     "merchant-api-key-2",
+    # ],
+}
+UNKNOWN_API_KEY_ADMINS = set(API_KEYS_BY_ADMIN) - set(ADMIN_IDS)
+if UNKNOWN_API_KEY_ADMINS:
+    raise ValueError(
+        "Все владельцы API_KEYS_BY_ADMIN должны быть перечислены в ADMIN_IDS: "
+        f"{sorted(UNKNOWN_API_KEY_ADMINS)}"
+    )
 CONTACT_URL = "https://t.me/daich"
 DONATION_URL = "https://renothingg.github.io/?support"
 BIG_CHECKS_GUIDE_URL = (

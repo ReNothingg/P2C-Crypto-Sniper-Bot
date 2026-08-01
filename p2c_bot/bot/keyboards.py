@@ -26,10 +26,6 @@ def dashboard_keyboard(running: bool) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text="Подключить API-ключ",
-                callback_data="connect_api",
-            ),
-            InlineKeyboardButton(
                 text="Настроить лимиты",
                 callback_data="configure_limits",
             ),

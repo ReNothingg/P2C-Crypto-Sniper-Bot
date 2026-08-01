@@ -7,10 +7,6 @@ import aiohttp
 from p2c_bot.core import config
 
 
-def clean_api_key(value: str) -> str:
-    return value.strip().removeprefix("Bearer ").strip()
-
-
 async def fetch_merchant_config(api_key: str) -> dict[str, Any]:
     headers = {"X-API-Key": api_key, "Accept": "application/json"}
     timeout = aiohttp.ClientTimeout(total=config.REQUEST_TIMEOUT)

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from html import escape
-
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -15,10 +13,10 @@ from p2c_bot.bot.access import AdminOnlyMiddleware
 from p2c_bot.bot.dashboard import build_dashboard_html, build_dashboard_rich
 from p2c_bot.bot.keyboards import dashboard_keyboard
 from p2c_bot.bot.reports import send_daily_reports
-from p2c_bot.bot.states import ConfigureLimits, ConnectAccount
+from p2c_bot.bot.states import ConfigureLimits
 from p2c_bot.core import config
 from p2c_bot.infrastructure.database import db
-from p2c_bot.p2c.api_keys import clean_api_key, fetch_merchant_config
+from p2c_bot.p2c.api_keys import fetch_merchant_config
 from p2c_bot.p2c.manager import SniperManager
 
 try:
@@ -89,45 +87,6 @@ async def start_command(message: types.Message, state: FSMContext) -> None:
     await send_dashboard(message.chat.id, message.from_user.id)
 
 
-@dp.callback_query(F.data == "connect_api")
-async def connect_api(callback: types.CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(ConnectAccount.api_key)
-    await callback.message.answer(
-        "<b>Отправьте API-ключ мерчанта</b>\n\n"
-        "Для ключа нужны права на чтение и получение P2C-платежей."
-    )
-    await callback.answer()
-
-
-@dp.message(ConnectAccount.api_key)
-async def receive_api_key(message: types.Message, state: FSMContext) -> None:
-    if not message.text:
-        await message.answer("Отправьте API-ключ обычным текстом.")
-        return
-    api_key = clean_api_key(message.text)
-    try:
-        merchant = await fetch_merchant_config(api_key)
-    except Exception as exc:
-        await state.clear()
-        await message.answer(
-            f"<b>Не удалось подключить API-ключ</b>\n{escape(str(exc))}"
-        )
-        await send_dashboard(message.chat.id, message.from_user.id)
-        return
-    await db.add_account(message.from_user.id, api_key)
-    await state.clear()
-    name = (
-        merchant.get("brand_name")
-        or merchant.get("merchant_name")
-        or merchant.get("name")
-        or "мерчант"
-    )
-    await message.answer(
-        f"<b>API-ключ подключён</b>\nМерчант: {escape(str(name))}"
-    )
-    await send_dashboard(message.chat.id, message.from_user.id)
-
-
 @dp.callback_query(F.data == "configure_limits")
 async def configure_limits(
     callback: types.CallbackQuery, state: FSMContext
@@ -172,7 +131,7 @@ async def toggle_sniper(callback: types.CallbackQuery) -> None:
     accounts = await db.get_accounts(user_id)
     if not accounts:
         await callback.answer(
-            "Сначала подключите хотя бы один API-ключ.",
+            "Добавьте API-ключи в config.py и перезапустите бота.",
             show_alert=True,
         )
         return
@@ -191,6 +150,7 @@ async def toggle_sniper(callback: types.CallbackQuery) -> None:
 
 async def on_startup() -> None:
     await db.connect()
+    await db.replace_accounts_from_config(config.API_KEYS_BY_ADMIN)
     await db.reset_running_statuses()
     if not scheduler.running:
         scheduler.add_job(
