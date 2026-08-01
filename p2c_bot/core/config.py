@@ -8,13 +8,11 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_IDS = [
-    int(value)
-    for value in os.getenv("ADMIN_IDS", "7878539493").split(",")
-    if value.strip().isdigit()
-]
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
-API_KEYS_BY_ADMIN: dict[int, list[str]] = {}
+API_KEYS_BY_ADMIN: dict[int, list[str]] = {
+    
+}
 
 UNKNOWN_API_KEY_ADMINS = set(API_KEYS_BY_ADMIN) - set(ADMIN_IDS)
 if UNKNOWN_API_KEY_ADMINS:
