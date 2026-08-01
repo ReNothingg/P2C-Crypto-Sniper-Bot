@@ -15,8 +15,6 @@ from aiogram.types import (
     RichTextUrl,
 )
 
-from p2c_bot.core import config
-
 
 def mask_api_key(api_key: str) -> str:
     if len(api_key) <= 8:
@@ -70,7 +68,7 @@ def build_dashboard_rich(
     status = "Снайпер запущен" if running else "Снайпер остановлен"
     contact_text = (
         "Контакт: @daich\n"
-        f"Поддержать проект: {config.DONATION_URL}"
+        "Поддержать проект: https://renothingg.github.io/?support"
     )
     blocks: list[Any] = [
         InputRichBlockTable(
@@ -81,7 +79,11 @@ def build_dashboard_rich(
             text=RichTextBold(
                 text=RichTextUrl(
                     text="Как ловить большие чеки?",
-                    url=config.BIG_CHECKS_GUIDE_URL,
+                    url=(
+                        "https://github.com/ReNothingg/P2C-Crypto-Sniper-Bot"
+                        "#%D0%BA%D0%B0%D0%BA-%D0%BB%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-"
+                        "%D0%B1%D0%BE%D0%BB%D1%8C%D1%88%D0%B8%D0%B5-%D1%87%D0%B5%D0%BA%D0%B8"
+                    ),
                 )
             )
         ),
@@ -138,9 +140,11 @@ def build_dashboard_html(
     status = "Снайпер запущен" if running else "Снайпер остановлен"
     lines = [
         "<b>Контакт:</b> @daich",
-        f"<b>Поддержать проект:</b> {escape(config.DONATION_URL)}",
+        "<b>Поддержать проект:</b> https://renothingg.github.io/?support",
         (
-            f'<b><a href="{escape(config.BIG_CHECKS_GUIDE_URL)}">'
+            '<b><a href="https://github.com/ReNothingg/P2C-Crypto-Sniper-Bot'
+            '#%D0%BA%D0%B0%D0%BA-%D0%BB%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-'
+            '%D0%B1%D0%BE%D0%BB%D1%8C%D1%88%D0%B8%D0%B5-%D1%87%D0%B5%D0%BA%D0%B8">'
             "Как ловить большие чеки?</a></b>"
         ),
         "",

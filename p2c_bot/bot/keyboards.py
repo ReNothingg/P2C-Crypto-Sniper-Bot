@@ -4,8 +4,6 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 
-from p2c_bot.core import config
-
 
 def dashboard_keyboard(running: bool) -> InlineKeyboardMarkup:
     rows = [
@@ -35,12 +33,12 @@ def dashboard_keyboard(running: bool) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text="Связаться",
-                url=config.CONTACT_URL,
+                url="https://t.me/daich",
                 style=ButtonStyle.SUCCESS,
             ),
             InlineKeyboardButton(
                 text="Поддержать проект",
-                url=config.DONATION_URL,
+                url="https://renothingg.github.io/?support",
                 style=ButtonStyle.SUCCESS,
             ),
         ]

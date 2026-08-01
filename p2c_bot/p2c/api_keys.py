@@ -12,7 +12,7 @@ async def fetch_merchant_config(api_key: str) -> dict[str, Any]:
     timeout = aiohttp.ClientTimeout(total=config.REQUEST_TIMEOUT)
     async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
         async with session.get(
-            f"{config.API_BASE_URL}/p2cMerchant/getConfig"
+            "https://api.send.tg/v1/p2cMerchant/getConfig"
         ) as response:
             try:
                 payload = await response.json()

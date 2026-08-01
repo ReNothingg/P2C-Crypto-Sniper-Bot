@@ -13,10 +13,6 @@ from p2c_bot.infrastructure.database import db
 from p2c_bot.notifications.telegram import TelegramNotifier
 from p2c_bot.p2c.parsing import parse_amount, queue_items
 
-TAKE_PAYMENT_URL = f"{config.API_BASE_URL}/p2cMerchant/takePayment"
-GET_PAYMENTS_URL = f"{config.API_BASE_URL}/p2cMerchant/getPayments"
-GET_WS_TOKEN_URL = f"{config.API_BASE_URL}/p2cMerchant/getWsToken"
-
 
 class SniperBot:
     def __init__(
@@ -81,7 +77,9 @@ class SniperBot:
                 payment_ids = list(self.taken_payments)
                 if payment_ids:
                     status, payload = await self.api_request(
-                        "POST", GET_PAYMENTS_URL, json={"payment_ids": payment_ids}
+                        "POST",
+                        "https://api.send.tg/v1/p2cMerchant/getPayments",
+                        json={"payment_ids": payment_ids},
                     )
                     if status == 401:
                         await self.stop("API-ключ недействителен или отключён")
@@ -140,7 +138,9 @@ class SniperBot:
         self.attempted_qrs.add(qr_id)
 
         status, payload = await self.api_request(
-            "POST", TAKE_PAYMENT_URL, json={"qr_id": qr_id}
+            "POST",
+            "https://api.send.tg/v1/p2cMerchant/takePayment",
+            json={"qr_id": qr_id},
         )
         if status == 401:
             await self.stop("API-ключ недействителен или отключён")
@@ -180,7 +180,9 @@ class SniperBot:
             await self.stop(f"Ошибка API: {error}. Проверьте права и список IP")
 
     async def consume_websocket(self) -> None:
-        status, payload = await self.api_request("GET", GET_WS_TOKEN_URL)
+        status, payload = await self.api_request(
+            "GET", "https://api.send.tg/v1/p2cMerchant/getWsToken"
+        )
         if not payload.get("ok"):
             error = payload.get("error", f"HTTP {status}")
             if error in {
@@ -199,7 +201,7 @@ class SniperBot:
             raise RuntimeError("API не вернул токен WebSocket")
         assert self.session
         async with self.session.ws_connect(
-            config.API_WS_URL,
+            "wss://api.send.tg/v1/p2cMerchant/ws",
             params={"ws_token": ws_token},
             heartbeat=45,
             timeout=config.REQUEST_TIMEOUT,

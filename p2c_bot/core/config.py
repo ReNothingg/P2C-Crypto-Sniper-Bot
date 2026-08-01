@@ -14,29 +14,14 @@ ADMIN_IDS = [
     if value.strip().isdigit()
 ]
 
-# Merchant API keys are managed only here. The Telegram bot no longer accepts
-# credentials in messages. Keep every key assigned to exactly one admin.
-API_KEYS_BY_ADMIN: dict[int, list[str]] = {
-    # 7878539493: [
-    #     "merchant-api-key-1",
-    #     "merchant-api-key-2",
-    # ],
-}
+API_KEYS_BY_ADMIN: dict[int, list[str]] = {}
+
 UNKNOWN_API_KEY_ADMINS = set(API_KEYS_BY_ADMIN) - set(ADMIN_IDS)
 if UNKNOWN_API_KEY_ADMINS:
     raise ValueError(
         "Все владельцы API_KEYS_BY_ADMIN должны быть перечислены в ADMIN_IDS: "
         f"{sorted(UNKNOWN_API_KEY_ADMINS)}"
     )
-CONTACT_URL = "https://t.me/daich"
-DONATION_URL = "https://renothingg.github.io/?support"
-BIG_CHECKS_GUIDE_URL = (
-    "https://github.com/ReNothingg/P2C-Crypto-Sniper-Bot"
-    "#%D0%BA%D0%B0%D0%BA-%D0%BB%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-"
-    "%D0%B1%D0%BE%D0%BB%D1%8C%D1%88%D0%B8%D0%B5-%D1%87%D0%B5%D0%BA%D0%B8"
-)
 DB_PATH = str(BASE_DIR / "bot_users.db")
-API_BASE_URL = "https://api.send.tg/v1"
-API_WS_URL = "wss://api.send.tg/v1/p2cMerchant/ws"
 REQUEST_TIMEOUT = 15.0
 POLL_INTERVAL = 2.0
