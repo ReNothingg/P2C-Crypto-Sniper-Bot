@@ -33,6 +33,8 @@ class Database:
                 account_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 api_key TEXT NOT NULL UNIQUE,
+                credential_type TEXT NOT NULL DEFAULT 'api_key',
+                payment_method_id TEXT,
                 min_amount REAL DEFAULT 0,
                 max_amount REAL DEFAULT 1000000000,
                 is_running INTEGER DEFAULT 0,
@@ -51,6 +53,10 @@ class Database:
             """
         )
         await self._ensure_column("orders", "account_id", "INTEGER")
+        await self._ensure_column(
+            "merchant_accounts", "credential_type", "TEXT NOT NULL DEFAULT 'api_key'"
+        )
+        await self._ensure_column("merchant_accounts", "payment_method_id", "TEXT")
         await self.connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_order_id ON orders(order_id)"
         )
@@ -96,27 +102,52 @@ class Database:
         return [dict(row) for row in await cursor.fetchall()]
 
     async def replace_accounts_from_config(
-        self, accounts_by_admin: dict[int, list[str]]
+        self,
+        accounts_by_admin: dict[int, list[str]],
+        tokens_by_admin: dict[int, list[str | dict[str, str]]] | None = None,
     ) -> None:
-        """Replace runtime accounts with the keys declared in config.py."""
+        """Replace runtime credentials declared in config.py."""
         assert self.connection
-        normalized: dict[int, list[str]] = {}
-        owners: dict[str, int] = {}
+        tokens_by_admin = tokens_by_admin or {}
+        normalized: dict[int, list[tuple[str, str, str | None]]] = {}
+        owners: dict[tuple[str, str], int] = {}
         for raw_user_id, raw_keys in accounts_by_admin.items():
             user_id = int(raw_user_id)
-            keys: list[str] = []
+            credentials: list[tuple[str, str, str | None]] = []
             for raw_key in raw_keys:
                 key = str(raw_key).strip().removeprefix("Bearer ").strip()
-                if not key or key in keys:
+                if not key:
                     continue
-                previous_owner = owners.get(key)
+                credential = ("api_key", key, None)
+                previous_owner = owners.get(credential[:2])
                 if previous_owner is not None and previous_owner != user_id:
-                    raise ValueError(
-                        "Один API-ключ нельзя назначить нескольким администраторам"
-                    )
-                owners[key] = user_id
-                keys.append(key)
-            normalized[user_id] = keys
+                    raise ValueError("Одна учетная запись назначена нескольким администраторам")
+                owners[credential[:2]] = user_id
+                if credential not in credentials:
+                    credentials.append(credential)
+
+            normalized[user_id] = credentials
+
+        for raw_user_id, raw_tokens in tokens_by_admin.items():
+            user_id = int(raw_user_id)
+            credentials = normalized.setdefault(user_id, [])
+            for raw_token in raw_tokens:
+                method_id = None
+                if isinstance(raw_token, dict):
+                    value = raw_token.get("token") or raw_token.get("access_token")
+                    method_id = raw_token.get("payment_method_id")
+                else:
+                    value = raw_token
+                token = str(value or "").strip()
+                if not token:
+                    continue
+                credential = ("access_token", token, str(method_id) if method_id else None)
+                previous_owner = owners.get(credential[:2])
+                if previous_owner is not None and previous_owner != user_id:
+                    raise ValueError("Один access_token назначен нескольким администраторам")
+                owners[credential[:2]] = user_id
+                if credential not in credentials:
+                    credentials.append(credential)
 
         previous_limits: dict[int, tuple[float, float]] = {}
         cursor = await self.connection.execute(
@@ -129,7 +160,7 @@ class Database:
             )
 
         await self.connection.execute("DELETE FROM merchant_accounts")
-        for user_id, keys in normalized.items():
+        for user_id, credentials in normalized.items():
             await self.connection.execute(
                 "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
                 (user_id,),
@@ -140,10 +171,12 @@ class Database:
             await self.connection.executemany(
                 """
                 INSERT INTO merchant_accounts
-                    (user_id, api_key, min_amount, max_amount)
-                VALUES (?, ?, ?, ?)
+                    (user_id, api_key, credential_type, payment_method_id,
+                     min_amount, max_amount)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                [(user_id, key, minimum, maximum) for key in keys],
+                [(user_id, value, kind, method_id, minimum, maximum)
+                 for kind, value, method_id in credentials],
             )
         await self.connection.commit()
 

@@ -11,14 +11,18 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 
 API_KEYS_BY_ADMIN: dict[int, list[str]] = {
-    
 }
 
-UNKNOWN_API_KEY_ADMINS = set(API_KEYS_BY_ADMIN) - set(ADMIN_IDS)
-if UNKNOWN_API_KEY_ADMINS:
+ACCESS_TOKENS_BY_ADMIN: dict[int, list[str | dict[str, str]]] = {
+}
+
+UNKNOWN_CREDENTIAL_ADMINS = (
+    set(API_KEYS_BY_ADMIN) | set(ACCESS_TOKENS_BY_ADMIN)
+) - set(ADMIN_IDS)
+if UNKNOWN_CREDENTIAL_ADMINS:
     raise ValueError(
-        "Все владельцы API_KEYS_BY_ADMIN должны быть перечислены в ADMIN_IDS: "
-        f"{sorted(UNKNOWN_API_KEY_ADMINS)}"
+        "Все владельцы API_KEYS_BY_ADMIN/ACCESS_TOKENS_BY_ADMIN должны быть "
+        f"перечислены в ADMIN_IDS: {sorted(UNKNOWN_CREDENTIAL_ADMINS)}"
     )
 DB_PATH = str(BASE_DIR / "bot_users.db")
 REQUEST_TIMEOUT = 15.0

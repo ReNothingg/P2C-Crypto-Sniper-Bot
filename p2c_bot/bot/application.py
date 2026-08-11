@@ -49,7 +49,9 @@ async def _merchant_views(
 ) -> list[dict]:
     async def load(account: dict) -> dict:
         try:
-            return await fetch_merchant_config(account["api_key"])
+            return await fetch_merchant_config(
+                account["api_key"], account.get("credential_type", "api_key")
+            )
         except Exception:
             return {}
 
@@ -131,7 +133,7 @@ async def toggle_sniper(callback: types.CallbackQuery) -> None:
     accounts = await db.get_accounts(user_id)
     if not accounts:
         await callback.answer(
-            "Добавьте API-ключи в config.py и перезапустите бота.",
+            "Добавьте API-ключи или access_token в config.py и перезапустите бота.",
             show_alert=True,
         )
         return
@@ -150,7 +152,9 @@ async def toggle_sniper(callback: types.CallbackQuery) -> None:
 
 async def on_startup() -> None:
     await db.connect()
-    await db.replace_accounts_from_config(config.API_KEYS_BY_ADMIN)
+    await db.replace_accounts_from_config(
+        config.API_KEYS_BY_ADMIN, config.ACCESS_TOKENS_BY_ADMIN
+    )
     await db.reset_running_statuses()
     if not scheduler.running:
         scheduler.add_job(

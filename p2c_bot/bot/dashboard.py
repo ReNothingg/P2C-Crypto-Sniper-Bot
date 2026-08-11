@@ -22,6 +22,11 @@ def mask_api_key(api_key: str) -> str:
     return f"{api_key[:4]}…{api_key[-4:]}"
 
 
+def credential_label(account: dict[str, Any]) -> str:
+    kind = account.get("credential_type", "api_key")
+    return "access_token" if kind == "access_token" else "API-ключ"
+
+
 def format_limits(minimum: Any, maximum: Any) -> str:
     return f"{float(minimum or 0):,.0f}–{float(maximum or 0):,.0f} RUB".replace(
         ",", " "
@@ -96,7 +101,7 @@ def build_dashboard_rich(
     if not accounts:
         blocks.append(
             InputRichBlockParagraph(
-                text="API-ключи не заданы в config.py"
+                text="API-ключи или access_token не заданы в config.py"
             )
         )
     for index, account in enumerate(accounts, 1):
@@ -116,7 +121,8 @@ def build_dashboard_rich(
             InputRichBlockParagraph(
                 text=RichTextCode(
                     text=(
-                        f"Ключ: {mask_api_key(account['api_key'])}\n"
+                        f"Тип: {credential_label(account)}\n"
+                        f"Значение: {mask_api_key(account['api_key'])}\n"
                         f"Лимиты: {format_limits(account.get('min_amount'), account.get('max_amount'))}\n"
                         f"Состояние: {'запущен' if account.get('is_running') else 'остановлен'}"
                     )
@@ -159,7 +165,7 @@ def build_dashboard_html(
         "<b>Подключённые мерчанты</b>",
     ]
     if not accounts:
-        lines.append("API-ключи не заданы в config.py")
+        lines.append("API-ключи или access_token не заданы в config.py")
     for index, account in enumerate(accounts, 1):
         view = merchant_views[index - 1] if index <= len(merchant_views) else {}
         merchant = (
@@ -172,7 +178,8 @@ def build_dashboard_html(
             [
                 "",
                 f"<b>{index}. {escape(str(merchant))}</b>",
-                f"Ключ: <code>{escape(mask_api_key(account['api_key']))}</code>",
+                f"Тип: {escape(credential_label(account))}",
+                f"Значение: <code>{escape(mask_api_key(account['api_key']))}</code>",
                 (
                     "Лимиты: "
                     + format_limits(

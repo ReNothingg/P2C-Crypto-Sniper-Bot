@@ -11,7 +11,8 @@ from loguru import logger
 from p2c_bot.core import config
 from p2c_bot.infrastructure.database import db
 from p2c_bot.notifications.telegram import TelegramNotifier
-from p2c_bot.p2c.parsing import parse_amount, queue_items
+from p2c_bot.p2c.api_keys import access_token_cookie
+from p2c_bot.p2c.parsing import parse_amount, queue_items, socketio_queue_items
 
 
 class SniperBot:
@@ -22,7 +23,8 @@ class SniperBot:
     ) -> None:
         self.account_id = int(account["account_id"])
         self.user_id = int(account["user_id"])
-        self.api_key = account["api_key"]
+        self.credential = account["api_key"]
+        self.credential_type = account.get("credential_type", "api_key")
         self.min = Decimal(str(account.get("min_amount") or 0))
         self.max = Decimal(str(account.get("max_amount") or 1_000_000_000))
         self.notifier = notifier
@@ -72,6 +74,8 @@ class SniperBot:
             return 0, {"ok": False, "error": "Ошибка соединения"}
 
     async def monitor_payments(self) -> None:
+        if self.credential_type == "access_token":
+            return
         while self.running:
             try:
                 payment_ids = list(self.taken_payments)
@@ -128,7 +132,7 @@ class SniperBot:
             )
 
     async def try_take_order(self, qr: dict[str, Any]) -> None:
-        qr_id = qr.get("qr_id")
+        qr_id = qr.get("qr_id") or qr.get("id")
         amount = parse_amount(qr.get("in_amount"))
         if not qr_id or str(qr_id) in self.attempted_qrs:
             return
@@ -137,19 +141,28 @@ class SniperBot:
         qr_id = str(qr_id)
         self.attempted_qrs.add(qr_id)
 
-        status, payload = await self.api_request(
-            "POST",
-            "https://api.send.tg/v1/p2cMerchant/takePayment",
-            json={"qr_id": qr_id},
-        )
-        if status == 401:
-            await self.stop("API-ключ недействителен или отключён")
+        if self.credential_type == "access_token":
+            status, payload = await self.api_request(
+                "POST",
+                f"https://app.send.tg/internal/v1/p2c/payments/take/{qr_id}",
+            )
+            if isinstance(payload.get("data"), dict) and not payload.get("result"):
+                payload["result"] = payload["data"]
+            payload.setdefault("ok", 200 <= status < 300)
+        else:
+            status, payload = await self.api_request(
+                "POST",
+                "https://api.send.tg/v1/p2cMerchant/takePayment",
+                json={"qr_id": qr_id},
+            )
+        if status in {401, 403}:
+            await self.stop("Токен или API-ключ недействителен/отключён")
             return
         if payload.get("ok"):
             payment = payload.get("result", {})
             if not isinstance(payment, dict):
                 payment = {}
-            payment_id = payment.get("payment_id")
+            payment_id = payment.get("payment_id") or payment.get("id")
             if payment_id is None:
                 logger.warning("В ответе takePayment отсутствует payment_id: {}", payload)
                 return
@@ -180,6 +193,9 @@ class SniperBot:
             await self.stop(f"Ошибка API: {error}. Проверьте права и список IP")
 
     async def consume_websocket(self) -> None:
+        if self.credential_type == "access_token":
+            await self.consume_token_websocket()
+            return
         status, payload = await self.api_request(
             "GET", "https://api.send.tg/v1/p2cMerchant/getWsToken"
         )
@@ -233,19 +249,54 @@ class SniperBot:
                 for qr in queue_items(event):
                     asyncio.create_task(self.try_take_order(qr))
 
+    async def consume_token_websocket(self) -> None:
+        assert self.session
+        async with self.session.ws_connect(
+            "wss://app.send.tg/internal/v1/p2c-socket/?EIO=4&transport=websocket",
+            heartbeat=45,
+            timeout=config.REQUEST_TIMEOUT,
+        ) as websocket:
+            async for message in websocket:
+                if not self.running:
+                    return
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                frame = str(message.data)
+                if frame.startswith("2"):
+                    await websocket.send_str("3")
+                    continue
+                if frame.startswith("0"):
+                    await websocket.send_str("40")
+                    continue
+                if frame.startswith("40"):
+                    await websocket.send_str('42["list:initialize"]')
+                    continue
+                for qr in socketio_queue_items(frame):
+                    asyncio.create_task(self.try_take_order(qr))
+
     async def start(self) -> None:
         self.running = True
         await db.set_running_status(self.account_id, True)
-        headers = {
-            "X-API-Key": self.api_key,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        if self.credential_type == "access_token":
+            headers = {
+                "Cookie": access_token_cookie(self.credential),
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Origin": "https://app.send.tg",
+                "Referer": "https://app.send.tg/",
+            }
+        else:
+            headers = {
+                "X-API-Key": self.credential,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
         monitor_task: asyncio.Task | None = None
         try:
             async with aiohttp.ClientSession(headers=headers) as session:
                 self.session = session
-                monitor_task = asyncio.create_task(self.monitor_payments())
+                if self.credential_type == "api_key":
+                    monitor_task = asyncio.create_task(self.monitor_payments())
                 while self.running:
                     try:
                         await self.consume_websocket()
